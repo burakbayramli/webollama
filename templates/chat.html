@@ -122,8 +122,7 @@
         <div class="col-12 col-md-9">
             <div class="chat-container">
                 <div class="chat-messages" id="chat-messages">
-                    <!-- Messages will be added here -->
-                </div>
+                    </div>
                 
                 <div class="chat-input">
                     <textarea class="form-control" id="message-input" rows="2" placeholder="Type your message here..." disabled></textarea>
@@ -139,6 +138,10 @@
 
 {% block extra_js %}
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const modelSelect = document.getElementById('model-select');
@@ -149,32 +152,34 @@
         
         let conversation = [];
         let isProcessing = false;
+
+        // Shared KaTeX options
+        const katexOptions = {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '$', right: '$', display: false},
+                {left: '\\(', right: '\\)', display: false},
+                {left: '\\[', right: '\\]', display: true}
+            ],
+            throwOnError: false
+        };
         
-        // Enable input when model is selected
         modelSelect.addEventListener('change', function() {
             const isModelSelected = !!this.value;
             messageInput.disabled = !isModelSelected;
             sendButton.disabled = !isModelSelected;
-            
-            if (isModelSelected) {
-                messageInput.focus();
-            }
-            
-            // Clear chat when changing models
+            if (isModelSelected) messageInput.focus();
             chatMessages.innerHTML = '';
             conversation = [];
         });
         
-        // Initialize if model is preselected from URL
         if (modelSelect.value) {
             messageInput.disabled = false;
             sendButton.disabled = false;
         }
         
-        // Send message when clicking send button
         sendButton.addEventListener('click', sendMessage);
         
-        // Send message when pressing Enter (but not with Shift+Enter)
         messageInput.addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -182,7 +187,6 @@
             }
         });
         
-        // Clear chat
         clearChatButton.addEventListener('click', function() {
             chatMessages.innerHTML = '';
             conversation = [];
@@ -193,25 +197,16 @@
             
             const message = messageInput.value.trim();
             const model = modelSelect.value;
-            
             if (!message || !model) return;
             
-            // Add user message to UI
             addMessage('user', message);
-            
-            // Clear input
             messageInput.value = '';
             
             isProcessing = true;
             messageInput.disabled = true;
             sendButton.disabled = true;
             
-            // Reference to the message element for streaming
-            let assistantMessageEl = null;
-            let assistantMessageContent = '';
-            
-            // Create and add the assistant message container
-            assistantMessageEl = document.createElement('div');
+            let assistantMessageEl = document.createElement('div');
             assistantMessageEl.className = 'message message-assistant';
             assistantMessageEl.innerHTML = `
                 <div class="message-content">
@@ -221,9 +216,11 @@
             `;
             chatMessages.appendChild(assistantMessageEl);
             chatMessages.scrollTop = chatMessages.scrollHeight;
+
+            const streamingContentEl = assistantMessageEl.querySelector('.streaming-content');
+            let assistantMessageContent = '';
             
-            // Use fetch to send the data and handle the stream response
-            const response = fetch('/api/chat', {
+            fetch('/api/chat', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -242,9 +239,7 @@
                 
                 function processStream() {
                     return reader.read().then(({ done, value }) => {
-                        if (done) {
-                            return;
-                        }
+                        if (done) return;
                         
                         const chunk = decoder.decode(value, { stream: true });
                         const lines = chunk.split('\n\n');
@@ -253,64 +248,47 @@
                             if (line.startsWith('data: ')) {
                                 try {
                                     const data = JSON.parse(line.substring(6));
-                                    
                                     if (data.error) {
-                                        // Handle error
-                                        if (assistantMessageEl && assistantMessageEl.parentNode) {
-                                            chatMessages.removeChild(assistantMessageEl);
-                                        }
+                                        if (assistantMessageEl && assistantMessageEl.parentNode) chatMessages.removeChild(assistantMessageEl);
                                         addErrorMessage(data.error);
                                         resetUI();
                                         return;
                                     }
                                     
                                     if (data.delta) {
-                                        // Update the streaming content
                                         assistantMessageContent += data.delta;
                                         streamingContentEl.innerHTML = marked.parse(assistantMessageContent) + '<div class="cursor"></div>';
+                                        // Render math while streaming
+                                        renderMathInElement(streamingContentEl, katexOptions);
                                         chatMessages.scrollTop = chatMessages.scrollHeight;
                                     }
                                     
                                     if (data.done) {
-                                        // Streaming is complete
-                                        
-                                        // Replace the streaming content with the final parsed markdown
                                         assistantMessageEl.innerHTML = `
                                             <div class="message-content">
                                                 <div class="message-role">Assistant</div>
                                                 ${marked.parse(assistantMessageContent)}
                                             </div>
                                         `;
-                                        
-                                        // Update conversation
+                                        // Final render
+                                        renderMathInElement(assistantMessageEl, katexOptions);
                                         conversation = data.conversation;
-                                        
-                                        // Reset UI
                                         resetUI();
                                         return;
                                     }
-                                } catch (e) {
-                                    // Invalid JSON, ignore this line
-                                }
+                                } catch (e) {}
                             }
                         }
-                        
                         return processStream();
                     });
                 }
-                
                 return processStream();
             })
             .catch(error => {
-                if (assistantMessageEl && assistantMessageEl.parentNode) {
-                    chatMessages.removeChild(assistantMessageEl);
-                }
+                if (assistantMessageEl && assistantMessageEl.parentNode) chatMessages.removeChild(assistantMessageEl);
                 addErrorMessage('Error with streaming response: ' + error.message);
                 resetUI();
             });
-            
-            // Get streaming content container
-            const streamingContentEl = assistantMessageEl.querySelector('.streaming-content');
             
             function resetUI() {
                 isProcessing = false;
@@ -323,20 +301,17 @@
         function addMessage(role, content) {
             const messageEl = document.createElement('div');
             messageEl.className = `message message-${role}`;
-            
-            // Parse markdown in assistant messages
-            if (role === 'assistant') {
-                content = marked.parse(content);
-            }
+            let displayContent = (role === 'assistant') ? marked.parse(content) : `<p>${escapeHtml(content)}</p>`;
             
             messageEl.innerHTML = `
                 <div class="message-content">
                     <div class="message-role">${role === 'user' ? 'You' : 'Assistant'}</div>
-                    ${role === 'assistant' ? content : `<p>${escapeHtml(content)}</p>`}
+                    ${displayContent}
                 </div>
             `;
             
             chatMessages.appendChild(messageEl);
+            if (role === 'assistant') renderMathInElement(messageEl, katexOptions);
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
         
@@ -349,12 +324,7 @@
         }
         
         function escapeHtml(unsafe) {
-            return unsafe
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-                .replace(/"/g, "&quot;")
-                .replace(/'/g, "&#039;");
+            return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
         }
     });
 </script>

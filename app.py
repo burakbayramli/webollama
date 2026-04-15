@@ -359,6 +359,23 @@ def chat():
         flash(f"Error connecting to Ollama API: {str(e)}", "danger")
         return render_template('chat.html', models=[])
 
+def append_to_markdown_log(role, content):
+    # Work on a local variable to be 100% safe
+    log_text = str(content) 
+    
+    import re
+    # Your cleaning logic
+    log_text = re.sub(r'#{1,3}\s+(.*)', r'\1\n', log_text)    
+    log_text = log_text.replace("**", "").replace("### ", "").replace("## ", "")
+    # This regex handles one or more spaces after a bullet point
+    log_text = re.sub(r'\*\s+', '* ', log_text)
+    
+    try:
+        with open('/home/burak/Downloads/output.md', 'a', encoding='utf-8') as f:
+            f.write(f"{role.upper()}\n{log_text}\n\n---\n\n")
+    except Exception as e:
+        print(f"Error writing to log: {e}")
+        
 @app.route('/api/chat', methods=['POST'])
 def api_chat():
     data = request.get_json()
@@ -383,6 +400,10 @@ def api_chat():
             result = response.json()
             # Extract assistant's message from the response
             assistant_message = result.get('message', {}).get('content', '')
+
+            append_to_markdown_log("user", message)
+            append_to_markdown_log("assistant", assistant_message)
+            
             return jsonify({
                 "response": assistant_message,
                 "conversation": messages + [{"role": "assistant", "content": assistant_message}]
@@ -422,6 +443,10 @@ def stream_chat_response(model, messages):
             
             # Send the final message with the complete conversation
             final_conversation = messages + [{"role": "assistant", "content": assistant_message}]
+
+            append_to_markdown_log("user", messages[-1]['content']) # Last user message
+            append_to_markdown_log("assistant", assistant_message) # Full streamed response
+            
             yield f"data: {json.dumps({'done': True, 'conversation': final_conversation})}\n\n"
             
         except Exception as e:
